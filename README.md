@@ -4,7 +4,7 @@ Fixed Shuffle Queue 是一款为 [Salt Player for Windows (SPW)](https://github.
 
 ## 安装与使用
 
-1. 前往本仓库的 **[Releases](https://github.com/你的用户名/spw-fixed-shuffle-plugin/releases)** 页面。
+1. 前往本仓库的 **[Releases](https://github.com/AugustuXue/spw-fixed-shuffle-plugin/releases)** 页面。
 2. 下载最新版本的 `FixedShuffleQueue-x.x.x-fixed-shuffle.zip` 文件。
 3. 打开SPW，选择 `设置`-`创意工坊`-`模组管理`，右上角选择导入模组，并选择模组zip文件进行导入
 4. 点击模组，选择启用
