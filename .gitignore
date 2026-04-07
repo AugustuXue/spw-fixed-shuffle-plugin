@@ -11,3 +11,5 @@ build/
 
 # Local configuration
 local.properties
+
+releases/
