@@ -7,70 +7,95 @@ import com.xuncorp.spw.workshop.api.PluginContext
 import com.xuncorp.spw.workshop.api.SpwPlugin
 import com.xuncorp.spw.workshop.api.UnstableSpwWorkshopApi
 import com.xuncorp.spw.workshop.api.WorkshopApi
-import java.lang.reflect.Field
-import java.lang.reflect.Method
-import java.lang.reflect.Modifier
-import kotlin.random.Random
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileWriter
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 class MainPlugin(
     pluginContext: PluginContext
 ) : SpwPlugin(pluginContext) {
 
-    private var monitorThread: Thread? = null
-    @Volatile private var isRunning = false
+    private var monitorScope: CoroutineScope? = null
+    private var monitorJob: Job? = null
 
     override fun start() {
-        isRunning = true
-        monitorThread = Thread {
+        val configManager = WorkshopApi.manager.createConfigManager(pluginContext.pluginId)
+        val config = configManager.getConfig()
+        val pluginDataDir = config.getConfigPath().toFile().parentFile
+        val configLogEnabled = (config.get("debug.enable_file_log", false) as? Boolean) ?: false
+        val logEnabled = FORCE_DEBUG_LOG || configLogEnabled
+        val logFile = File(pluginDataDir, "logs/plugin-debug.log")
+
+        configureDebugLogging(logEnabled, logFile)
+        logDebug(
+            "start(): pluginPath=${pluginContext.pluginPath}, pluginDataDir=$pluginDataDir, " +
+                "debugLogEnabled=$logEnabled, configLogEnabled=$configLogEnabled, forceDebugLog=$FORCE_DEBUG_LOG"
+        )
+
+        runCatching {
+            Class.forName("com.xuncorp.voxzen.service.PlaybackController")
+            logDebug("start(): PlaybackController class loaded")
+        }.onFailure { logThrowable("start(): PlaybackController load failed", it) }
+
+        runCatching {
+            Class.forName("com.xuncorp.spc.core.queue.PlaybackQueueState")
+            Class.forName("com.xuncorp.spc.core.queue.Ϳ")
+            logDebug("start(): raw queue classes loaded")
+        }.onFailure { logThrowable("start(): raw queue class load failed", it) }
+
+        monitorScope?.cancel()
+        monitorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        monitorJob = monitorScope!!.launch {
             runCatching {
                 val bridge = InternalPlaybackBridge()
+                logDebug("monitor(): event listener initialized")
                 var lastModeWasRandom = false
-                while (isRunning) {
-                    Thread.sleep(500)
+                bridge.playbackQueueStates().collect { stateValue ->
                     try {
-                        val stateValue = bridge.requirePlaybackQueueStateValue()
                         val modeObj = bridge.getModeMethod.invoke(stateValue)
-                        val modeStr = modeObj?.toString() ?: ""
-                        val isRandom = modeStr.contains("f8363") || modeStr.contains("Random", ignoreCase = true)
-                        
+                        val isRandom = bridge.isRandomMode(modeObj)
                         if (isRandom && !lastModeWasRandom) {
-                            // User switched to Random mode, hijack it!
                             val normalQueue = bridge.unwrapPlaybackQueue(bridge.getNormalQueueMethod.invoke(stateValue))
                             if (normalQueue.size >= 2) {
-                                val shuffledQueue = normalQueue.toMutableList().apply {
-                                    shuffle(Random.Default)
-                                }
-                                bridge.setPlaybackQueue(shuffledQueue, 0)
-                                bridge.playMusicAt(0, true)
-                                
-                                // Change mode back to linear (Sequence/LoopAll)
-                                val enums = modeObj!!.javaClass.enumConstants
-                                val seqEnum = enums.firstOrNull { 
-                                    val s = it.toString()
-                                    s.contains("f8361") || s.contains("Sequence", ignoreCase = true) || s.contains("LoopAll", ignoreCase = true)
-                                } ?: enums[0]
-                                
+                                val seqEnum = bridge.selectLinearMode(modeObj)
                                 bridge.changePlaybackMode(seqEnum)
-                                
-                                WorkshopApi.ui.toast(
-                                    "已触发固定随机（劫持随机播放），当前队列共 ${shuffledQueue.size} 首",
-                                    WorkshopApi.Ui.ToastType.Success
-                                )
+                                delay(150) // host mode switch is dispatched asynchronously
+                                val latestState = bridge.requirePlaybackQueueStateValue()
+                                val movedItemCount = bridge.shuffleNormalQueueKeepingCurrent(latestState)
+                                logDebug("monitor(): fixed shuffle reordered $movedItemCount items without replacing current media")
+                            } else {
+                                logDebug("monitor(): random mode entered with fewer than two items")
                             }
                         }
                         lastModeWasRandom = isRandom
-                    } catch (e: Exception) {
-                        // Ignore transient reflection errors during rapid state changes
+                    } catch (t: Throwable) {
+                        logThrowable("monitor(): state handling failed", t)
                     }
                 }
-            }
+            }.onFailure { logThrowable("monitor(): listener terminated", it) }
         }
-        monitorThread?.start()
+        logDebug("start(): StateFlow listener started")
     }
 
     override fun stop() {
-        isRunning = false
-        monitorThread?.interrupt()
+        monitorJob?.cancel()
+        monitorJob = null
+        monitorScope?.cancel()
+        monitorScope = null
+        closeDebugLogging()
+        logDebug("stop(): plugin stopped")
     }
 
     override fun delete() = Unit
@@ -81,143 +106,139 @@ class MainPlugin(
         @JvmStatic
         @JvmName("onDeterministicShuffleButtonClick")
         fun onDeterministicShuffleButtonClick() {
-            runCatching {
-                val playbackBridge = InternalPlaybackBridge()
-                val currentQueue = playbackBridge.getPlaybackQueueItems()
-
-                if (currentQueue.size < 2) {
-                    WorkshopApi.ui.toast(
-                        "当前播放队列少于 2 首歌曲，无需固定随机",
-                        WorkshopApi.Ui.ToastType.Warning
-                    )
-                    return
+            Thread {
+                runCatching {
+                    logDebug("button(): deterministic shuffle clicked")
+                    val playbackBridge = InternalPlaybackBridge()
+                    var state = playbackBridge.requirePlaybackQueueStateValue()
+                    val mode = playbackBridge.getModeMethod.invoke(state)
+                    if (playbackBridge.isRandomMode(mode)) {
+                        playbackBridge.changePlaybackMode(playbackBridge.selectLinearMode(mode))
+                        Thread.sleep(150)
+                        state = playbackBridge.requirePlaybackQueueStateValue()
+                    }
+                    val movedItemCount = playbackBridge.shuffleNormalQueueKeepingCurrent(state)
+                    if (movedItemCount < 2) {
+                        WorkshopApi.ui.toast("当前播放队列少于 2 首歌曲，无需固定随机", WorkshopApi.Ui.ToastType.Warning)
+                    } else {
+                        logDebug("button(): reordered $movedItemCount items without replacing current media")
+                    }
+                }.onFailure { error ->
+                    logThrowable("button(): deterministic shuffle failed", error)
+                    WorkshopApi.ui.toast(error.message ?: "固定随机队列失败，请查看日志", WorkshopApi.Ui.ToastType.Error)
                 }
-
-                val shuffledQueue = currentQueue.toMutableList().apply {
-                    shuffle(Random.Default)
-                }
-
-                playbackBridge.setPlaybackQueue(shuffledQueue, 0)
-                playbackBridge.playMusicAt(0, true)
-
-                WorkshopApi.ui.toast(
-                    "已成功将当前播放队列重置为固定随机顺序，共 ${shuffledQueue.size} 首",
-                    WorkshopApi.Ui.ToastType.Success
-                )
-            }.onFailure { error ->
-                WorkshopApi.ui.toast(
-                    error.message ?: "固定随机队列失败，请查看日志",
-                    WorkshopApi.Ui.ToastType.Error
-                )
-                error.printStackTrace()
+            }.apply {
+                name = "spw-fixed-shuffle-button"
+                isDaemon = true
+                start()
             }
+        }
+
+        private const val FORCE_DEBUG_LOG = false
+        private val logLock = Any()
+        @Volatile private var debugLogEnabled = false
+        @Volatile private var debugLogFile: File? = null
+        @Volatile private var debugLogWriter: BufferedWriter? = null
+        private val timestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS")
+
+        private fun configureDebugLogging(enabled: Boolean, file: File) {
+            DebugLogger.configure(enabled, file)
+        }
+
+        private fun closeDebugLogging() {
+            DebugLogger.close()
+        }
+
+        private fun logDebug(message: String) {
+            DebugLogger.logDebug(message)
+        }
+
+        private fun logDebug(message: () -> String) {
+            DebugLogger.logDebug(message)
+        }
+
+        private fun logThrowable(message: String, t: Throwable) {
+            DebugLogger.logThrowable(message, t)
         }
     }
 }
 
-private class InternalPlaybackBridge {
-    private val controllerClass: Class<*> = Class.forName("com.xuncorp.voxzen.service.PlaybackController")
-    private val controller: Any = controllerClass.getField("INSTANCE").get(null)
-    private val piscesMediaItemClass: Class<*> = Class.forName("com.xuncorp.pisces.PiscesMediaItem")
-    private val playbackQueueStateClass: Class<*> = Class.forName("androidx.compose.ui.ne")
-    private val playbackQueueItemClass: Class<*> = Class.forName("androidx.compose.ui.nd")
+private object DebugLogger {
+    private const val MAX_DEBUG_LOG_BYTES = 10L * 1024L * 1024L
+    private val logLock = Any()
+    @Volatile private var debugLogEnabled = false
+    @Volatile private var debugLogFile: File? = null
+    @Volatile private var debugLogWriter: BufferedWriter? = null
+    private val timestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS")
 
-    private val setPlaybackQueueMethod: Method = controllerClass.getMethod(
-        "setPlaybackQueue",
-        List::class.java,
-        Int::class.javaPrimitiveType
-    )
-
-    private val playMusicAtMethod: Method = controllerClass.getMethod(
-        "playMusicAt",
-        Int::class.javaPrimitiveType,
-        Boolean::class.javaPrimitiveType
-    )
-
-    private val moveMediaItemMethod: Method = controllerClass.getMethod(
-        "moveMediaItem",
-        Int::class.javaPrimitiveType,
-        Int::class.javaPrimitiveType
-    )
-
-    private val getPlaybackQueueStateMethod: Method = controllerClass.getMethod("getPlaybackQueueState")
-    private val stateFlowClass: Class<*> = Class.forName("kotlinx.coroutines.flow.StateFlow")
-    private val stateFlowGetValueMethod: Method = stateFlowClass.getMethod("getValue")
-    
-    // Obfuscated methods in PlaybackQueueState
-    val getModeMethod: Method = playbackQueueStateClass.getMethod("Ϳ")
-    val getNormalQueueMethod: Method = playbackQueueStateClass.getMethod("Ԩ")
-    private val getNormalIndexMethod: Method = playbackQueueStateClass.getMethod("ԩ")
-    private val getRandomQueueMethod: Method = playbackQueueStateClass.getMethod("Ԫ")
-    private val getRandomIndexMethod: Method = playbackQueueStateClass.getMethod("ԫ")
-    
-    // Obfuscated methods in PlaybackQueueItem
-    private val getQueueItemIdMethod: Method = playbackQueueItemClass.getMethod("Ϳ")
-    private val getQueueItemDataMethod: Method = playbackQueueItemClass.getMethod("Ԩ")
-
-    private val changePlaybackModeMethod: Method = controllerClass.methods.first {
-        it.name == "changePlaybackMode" && it.parameterCount == 1
-    }
-
-    fun changePlaybackMode(modeEnum: Any) {
-        changePlaybackModeMethod.invoke(controller, modeEnum)
-    }
-
-    fun getPlaybackQueueItems(): List<Any> {
-        val stateValue = requirePlaybackQueueStateValue()
-        val mode = getModeMethod.invoke(stateValue)
-        val normalQueue = unwrapPlaybackQueue(getNormalQueueMethod.invoke(stateValue))
-        val randomQueue = unwrapPlaybackQueue(getRandomQueueMethod.invoke(stateValue))
-
-        return if (mode?.toString()?.contains("f8363") == true || mode?.toString()?.contains("Random", ignoreCase = true) == true) {
-            randomQueue
-        } else {
-            normalQueue
-        }.takeIf { it.isNotEmpty() }
-            ?: throw IllegalStateException("未能从宿主播放队列中解析出 PiscesMediaItem 列表。")
-    }
-
-    fun setPlaybackQueue(items: List<Any>, startIndex: Int) {
-        setPlaybackQueueMethod.invoke(controller, items, startIndex)
-    }
-
-    fun playMusicAt(index: Int, playWhenReady: Boolean) {
-        playMusicAtMethod.invoke(controller, index, playWhenReady)
-    }
-
-    fun moveMediaItem(fromIndex: Int, toIndex: Int) {
-        moveMediaItemMethod.invoke(controller, fromIndex, toIndex)
-    }
-
-    fun requirePlaybackQueueStateValue(): Any {
-        val flow = getPlaybackQueueStateMethod.invoke(controller)
-            ?: throw IllegalStateException("无法获取宿主播放队列 StateFlow。")
-
-        val stateValue = readStateFlowValue(flow)
-            ?: throw IllegalStateException("无法读取宿主播放队列状态值。")
-
-        if (!playbackQueueStateClass.isInstance(stateValue)) {
-            throw IllegalStateException("播放队列状态类型不匹配: ${stateValue.javaClass.name}")
+    fun configure(enabled: Boolean, file: File) {
+        synchronized(logLock) {
+            debugLogEnabled = enabled
+            debugLogFile = file
+            closeLocked()
+            if (!enabled) return
+            file.parentFile?.mkdirs()
+            pruneIfNeeded(file)
+            debugLogWriter = BufferedWriter(FileWriter(file, true))
         }
-        return stateValue
+        logDebug("logging(): file=${file.absolutePath}, enabled=$enabled")
     }
 
-    fun unwrapPlaybackQueue(rawQueue: Any?): List<Any> {
-        val queue = rawQueue as? Iterable<*> ?: return emptyList()
-        return queue.mapNotNull { item ->
-            if (item == null || !playbackQueueItemClass.isInstance(item)) {
-                null
-            } else {
-                getQueueItemDataMethod.invoke(item)
-                    ?.takeIf { piscesMediaItemClass.isInstance(it) }
+    fun close() {
+        synchronized(logLock) {
+            closeLocked()
+        }
+    }
+
+    fun logDebug(message: String) {
+        if (!debugLogEnabled) return
+        val line = "[${LocalDateTime.now().format(timestampFormatter)}] $message"
+        synchronized(logLock) {
+            try {
+                val writer = debugLogWriter ?: return
+                writer.write(line)
+                writer.newLine()
+                writer.flush()
+            } catch (_: Throwable) {
             }
         }
     }
 
-    private fun readStateFlowValue(flow: Any): Any? {
-        if (!stateFlowClass.isInstance(flow)) {
-            return null
-        }
-        return stateFlowGetValueMethod.invoke(flow)
+    fun logDebug(message: () -> String) {
+        if (!debugLogEnabled) return
+        logDebug(message())
     }
+
+    fun logThrowable(message: String, t: Throwable) {
+        logDebug("$message: ${t::class.java.name}: ${t.message}")
+        val writer = StringWriter()
+        t.printStackTrace(PrintWriter(writer))
+        writer.toString().lineSequence().forEach { line ->
+            if (line.isNotBlank()) {
+                logDebug(line)
+            }
+        }
+    }
+
+    private fun closeLocked() {
+        runCatching {
+            debugLogWriter?.flush()
+            debugLogWriter?.close()
+        }
+        debugLogWriter = null
+    }
+
+    private fun pruneIfNeeded(file: File) {
+        if (!file.exists()) return
+        if (file.length() <= MAX_DEBUG_LOG_BYTES) return
+        runCatching { file.delete() }
+    }
+}
+
+private fun logDebug(message: String) {
+    DebugLogger.logDebug(message)
+}
+
+private fun logThrowable(message: String, t: Throwable) {
+    DebugLogger.logThrowable(message, t)
 }

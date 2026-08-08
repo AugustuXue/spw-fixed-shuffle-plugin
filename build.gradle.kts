@@ -24,6 +24,7 @@ kotlin {
 dependencies {
     compileOnly(kotlin("stdlib"))
     compileOnly(files("libs/api-0.1.0-dev20.jar"))
+    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     kapt(files("libs/api-0.1.0-dev20.jar"))
     compileOnly("org.pf4j:pf4j:3.12.0")
     kapt("org.pf4j:pf4j:3.12.0")
@@ -32,10 +33,14 @@ dependencies {
 val pluginClass = "com.gg.example.MainPlugin"
 val pluginId = "com.gg.example.fixedshuffle"
 val pluginName = "FixedShuffleQueue"
-val pluginDescription = "Deterministically shuffle the visible playback queue in Salt Player for Windows"       
+val pluginDescription = "Deterministically shuffle the visible playback queue in Salt Player for Windows"
 val pluginVersion = "1.0.0-fixed-shuffle"
 val pluginProvider = "Augustu"
 val pluginRepository = "https://github.com/Moriafly/spw-workshop-api/tree/main/example"
+val workshopPluginsDir = file(System.getenv("APPDATA") + "/Salt Player for Windows/workshop/plugins/")
+val pluginInstallDir = workshopPluginsDir.resolve("$pluginName-$pluginVersion")
+
+fun jarContents() = zipTree(tasks.named<Jar>("jar").get().archiveFile.get())
 
 tasks.named<Jar>("jar") {
     manifest {
@@ -52,26 +57,35 @@ tasks.named<Jar>("jar") {
     }
 }
 
-
-
-
-
-tasks.register<Jar>("plugin") {
-    destinationDirectory.set(
-        file(System.getenv("APPDATA") + "/Salt Player for Windows/workshop/plugins/")
-    )
+tasks.register<Zip>("pluginZip") {
+    destinationDirectory.set(workshopPluginsDir)
     archiveFileName.set("$pluginName-$pluginVersion.zip")
-
-    into("classes") {
-        with(tasks.named<Jar>("jar").get())
-    }
-    dependsOn(configurations.runtimeClasspath)
-    into("lib") {
-        from({
-            configurations.runtimeClasspath
-                .get()
-                .filter { it.name.endsWith("jar") }
-        })
-    }
     archiveExtension.set("zip")
+
+    dependsOn(tasks.named("jar"), configurations.runtimeClasspath)
+
+    from({ jarContents() }) {
+        into("classes")
+    }
+    from(configurations.runtimeClasspath) {
+        into("lib")
+        include("*.jar")
+    }
+}
+
+tasks.register<Sync>("deployPlugin") {
+    into(pluginInstallDir)
+    dependsOn(tasks.named("jar"), configurations.runtimeClasspath)
+
+    from({ jarContents() }) {
+        into("classes")
+    }
+    from(configurations.runtimeClasspath) {
+        into("lib")
+        include("*.jar")
+    }
+}
+
+tasks.register("plugin") {
+    dependsOn("pluginZip", "deployPlugin")
 }

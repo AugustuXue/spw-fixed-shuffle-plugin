@@ -40,7 +40,7 @@ cd spw-fixed-shuffle-plugin
 ## 技术原理
 
 由于 SPW 目前的 Workshop API 尚未暴露播放队列的操作接口，本插件采用了 **反射与状态流劫持** 的方式：
-1. 启动后台协程/线程，轮询监控 `PlaybackQueueState` (混淆为 `androidx.compose.ui.ne`) 的 `StateFlow`。
-2. 当检测到播放模式枚举切换为 `Random` (`Ϳ()` 混淆字段包含 `f8363`) 时触发劫持。
-3. 解析混淆的队列属性提取 `normalQueue` (`Ԩ()`) 和底层的 `PiscesMediaItem` 数据。
-4. 通过反射调用宿主内部类 `PlaybackController.INSTANCE.setPlaybackQueue()` 进行队列强制替换，随后调用 `changePlaybackMode` 切回顺序模式。
+1. 订阅 `PlaybackQueueState` 的 `StateFlow`，仅在队列状态变化时处理。
+2. 当检测到播放模式枚举切换为 `Random` 时触发劫持。
+3. 使用当前 SPW 的 `com.xuncorp.spc.core.queue` 队列类型读取正常队列和当前索引。
+4. 切回顺序模式后，通过宿主 `PlaybackController.moveMediaItem()` 原地重排当前歌曲前后的队列项；不替换当前媒体、不重播，也不重置播放进度。
