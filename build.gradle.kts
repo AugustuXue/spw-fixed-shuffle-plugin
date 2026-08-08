@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.gg.example"
-version = "1.0.0-fixed-shuffle"
+version = "1.0.1"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21
@@ -34,7 +34,7 @@ val pluginClass = "com.gg.example.MainPlugin"
 val pluginId = "com.gg.example.fixedshuffle"
 val pluginName = "FixedShuffleQueue"
 val pluginDescription = "Deterministically shuffle the visible playback queue in Salt Player for Windows"
-val pluginVersion = "1.0.0-fixed-shuffle"
+val pluginVersion = "1.0.1"
 val pluginProvider = "Augustu"
 val pluginRepository = "https://github.com/Moriafly/spw-workshop-api/tree/main/example"
 val workshopPluginsDir = file(System.getenv("APPDATA") + "/Salt Player for Windows/workshop/plugins/")
