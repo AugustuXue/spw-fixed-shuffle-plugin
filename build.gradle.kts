@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "com.gg.example"
-version = "1.1.1"
+version = "1.0.2"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
