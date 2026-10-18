@@ -16,7 +16,7 @@
           "title": "固定随机当前队列",
           "summary": "先洗牌生成固定顺序，再直接重建当前播放队列",
           "arrow_type": "none",
-          "on_click": "com.gg.example.MainPlugin.onDeterministicShuffleButtonClick"
+          "on_click": "com.augustu.spw.fixedshuffle.MainPlugin.onDeterministicShuffleButtonClick"
         }
       ]
     }

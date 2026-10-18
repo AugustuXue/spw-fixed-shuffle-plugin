@@ -1,7 +1,7 @@
 @file:OptIn(UnstableSpwWorkshopApi::class)
 @file:Suppress("unused")
 
-package com.gg.example
+package com.augustu.spw.fixedshuffle
 
 import com.xuncorp.spw.workshop.api.PluginContext
 import com.xuncorp.spw.workshop.api.SpwPlugin

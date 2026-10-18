@@ -8,8 +8,8 @@ plugins {
     id("com.xuncorp.spw.workshop") version "0.1.0-dev22"
 }
 
-group = "com.gg.example"
-version = "1.0.2"
+group = "com.augustu.spw.fixedshuffle"
+version = "1.0.3"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
@@ -33,8 +33,8 @@ dependencies {
 }
 
 spmod {
-    PluginClass = "com.gg.example.MainPlugin"
-    PluginId = "com.gg.example.fixedshuffle"
+    PluginClass = "com.augustu.spw.fixedshuffle.MainPlugin"
+    PluginId = "com.augustu.spw.fixedshuffle"
     PluginName = "FixedShuffleQueue"
     PluginDescription = "Deterministically shuffle the visible playback queue in Salt Player for Windows"
     PluginVersion = project.version.toString()

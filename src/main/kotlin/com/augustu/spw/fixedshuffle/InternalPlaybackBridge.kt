@@ -1,6 +1,6 @@
 @file:Suppress("UNCHECKED_CAST")
 
-package com.gg.example
+package com.augustu.spw.fixedshuffle
 
 import java.lang.reflect.Method
 import kotlinx.coroutines.flow.first
