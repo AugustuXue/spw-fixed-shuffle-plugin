@@ -12,9 +12,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -31,7 +31,7 @@ class MainPlugin(
     private var monitorJob: Job? = null
 
     override fun start() {
-        val configManager = WorkshopApi.manager.createConfigManager(pluginContext.pluginId)
+        val configManager = WorkshopApi.manager.createConfigManager()
         val config = configManager.getConfig()
         val pluginDataDir = config.getConfigPath().toFile().parentFile
         val configLogEnabled = (config.get("debug.enable_file_log", false) as? Boolean) ?: false
@@ -71,8 +71,8 @@ class MainPlugin(
                             if (normalQueue.size >= 2) {
                                 val seqEnum = bridge.selectLinearMode(modeObj)
                                 bridge.changePlaybackMode(seqEnum)
-                                delay(150) // host mode switch is dispatched asynchronously
-                                val latestState = bridge.requirePlaybackQueueStateValue()
+                                val latestState = bridge.awaitPlaybackMode(isRandom = false)
+                                    ?: error("Playback mode did not leave random mode within timeout")
                                 val movedItemCount = bridge.shuffleNormalQueueKeepingCurrent(latestState)
                                 logDebug("monitor(): fixed shuffle reordered $movedItemCount items without replacing current media")
                             } else {
@@ -108,20 +108,22 @@ class MainPlugin(
         fun onDeterministicShuffleButtonClick() {
             Thread {
                 runCatching {
-                    logDebug("button(): deterministic shuffle clicked")
-                    val playbackBridge = InternalPlaybackBridge()
-                    var state = playbackBridge.requirePlaybackQueueStateValue()
-                    val mode = playbackBridge.getModeMethod.invoke(state)
-                    if (playbackBridge.isRandomMode(mode)) {
-                        playbackBridge.changePlaybackMode(playbackBridge.selectLinearMode(mode))
-                        Thread.sleep(150)
-                        state = playbackBridge.requirePlaybackQueueStateValue()
-                    }
-                    val movedItemCount = playbackBridge.shuffleNormalQueueKeepingCurrent(state)
-                    if (movedItemCount < 2) {
-                        WorkshopApi.ui.toast("当前播放队列少于 2 首歌曲，无需固定随机", WorkshopApi.Ui.ToastType.Warning)
-                    } else {
-                        logDebug("button(): reordered $movedItemCount items without replacing current media")
+                    runBlocking {
+                        logDebug("button(): deterministic shuffle clicked")
+                        val playbackBridge = InternalPlaybackBridge()
+                        var state = playbackBridge.requirePlaybackQueueStateValue()
+                        val mode = playbackBridge.getModeMethod.invoke(state)
+                        if (playbackBridge.isRandomMode(mode)) {
+                            playbackBridge.changePlaybackMode(playbackBridge.selectLinearMode(mode))
+                            state = playbackBridge.awaitPlaybackMode(isRandom = false)
+                                ?: error("播放模式切换超时，已取消固定随机")
+                        }
+                        val movedItemCount = playbackBridge.shuffleNormalQueueKeepingCurrent(state)
+                        if (movedItemCount < 2) {
+                            WorkshopApi.ui.toast("当前播放队列少于 2 首歌曲，无需固定随机", WorkshopApi.Ui.ToastType.Warning)
+                        } else {
+                            logDebug("button(): reordered $movedItemCount items without replacing current media")
+                        }
                     }
                 }.onFailure { error ->
                     logThrowable("button(): deterministic shuffle failed", error)

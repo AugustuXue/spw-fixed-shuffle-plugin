@@ -3,7 +3,9 @@
 package com.gg.example
 
 import java.lang.reflect.Method
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * SPW internal queue bridge.
@@ -45,6 +47,19 @@ class InternalPlaybackBridge {
 
     /** The host exposes this as the public kotlinx.coroutines StateFlow interface. */
     fun playbackQueueStates(): StateFlow<*> = playbackQueueStateFlow
+
+    /**
+     * Waits for the host to publish the requested playback mode. A timeout
+     * aborts the operation; it deliberately does not fall back to a fixed
+     * delay because that can reorder against a stale queue snapshot.
+     */
+    suspend fun awaitPlaybackMode(isRandom: Boolean, timeoutMillis: Long = 1_000L): Any? {
+        return withTimeoutOrNull(timeoutMillis) {
+            playbackQueueStateFlow.first { stateValue ->
+                isRandomMode(getModeMethod.invoke(stateValue)) == isRandom
+            }
+        }
+    }
 
     fun isRandomMode(modeObj: Any?): Boolean = modeObj?.toString()?.lowercase()?.let {
         it.contains("random") || it.contains("shuffle")
