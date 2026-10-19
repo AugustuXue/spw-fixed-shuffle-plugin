@@ -2,12 +2,17 @@
 
 Fixed Shuffle Queue 是一款为 [Salt Player for Windows (SPW)](https://github.com/Moriafly/SaltPlayerForWindows) 开发的第三方插件。
 
+- [Steam 创意工坊条目](https://steamcommunity.com/sharedfiles/filedetails/?id=3821989242)
+- [GitHub Releases](https://github.com/AugustuXue/spw-fixed-shuffle-plugin/releases)
+
+当前发布版本适配 Salt Player for Windows（Steam）1.19.0。
+
 ## 安装与使用
 
-1. 前往本仓库的 **[Releases](https://github.com/AugustuXue/spw-fixed-shuffle-plugin/releases)** 页面。
-2. 下载最新版本的 `FixedShuffleQueue-x.x.x-fixed-shuffle.zip` 文件。
-3. 打开SPW，选择 `设置`-`创意工坊`-`模组管理`，右上角选择导入模组，并选择模组zip文件进行导入
-4. 点击模组，选择启用
+1. 前往本仓库的 **[Releases](https://github.com/AugustuXue/spw-fixed-shuffle-plugin/releases)** 页面，或打开上方的 Steam 创意工坊条目。
+2. 本地导入时下载最新版本的 `.spmod` 文件，例如 `plugin-com.augustu.spw.fixedshuffle-x.x.x.spmod`。
+3. 打开 SPW，选择 `设置`-`创意工坊`-`模组管理`，右上角选择导入模组，并选择 `.spmod` 文件进行导入。
+4. 点击模组，选择启用。
 
 ---
 
@@ -15,7 +20,7 @@ Fixed Shuffle Queue 是一款为 [Salt Player for Windows (SPW)](https://github.
 
 本插件旨在优化和“劫持”原生的随机播放体验。当你在 SPW 主界面点击【随机播放】时：
 - 插件会瞬间拦截该操作，将当前的正常播放队列进行**完全打乱**和重组。
-- 将打乱后的固定顺序重新写入播放队列，并从第一首开始播放。
+- 将打乱后的固定顺序重新写入播放队列，同时保持当前播放歌曲和播放进度不变。
 - 自动将播放模式切换回【列表循环/顺序播放】，让你可以直接看到完整的随机后顺序，且可以继续使用原生的拖拽排序功能。
 
 ---
@@ -24,7 +29,7 @@ Fixed Shuffle Queue 是一款为 [Salt Player for Windows (SPW)](https://github.
 
 本项目已脱离官方 `spw-workshop-api` 模板独立出来，可直接使用 Gradle 进行构建。
 
-**环境要求**：本机必须安装 JDK 21，并配置好 `JAVA_HOME`。
+**环境要求**：本机必须安装 JDK 25，并配置好 `JAVA_HOME`。
 
 ```bash
 cd spw-fixed-shuffle-plugin
@@ -33,7 +38,7 @@ cd spw-fixed-shuffle-plugin
 ./gradlew.bat plugin
 ```
 
-编译完成后，插件 `.zip` 包会自动生成并复制到你的 `%APPDATA%\Salt Player for Windows\workshop\plugins\` 目录下，重启播放器即可生效。
+编译完成后，插件 `.spmod` 包会生成在 `build/libs/` 目录下。执行 `deployPlugin` 任务可将其复制到你的 `%APPDATA%\Salt Player for Windows\workshop\plugins\` 目录，重启播放器即可生效。
 
 ---
 
